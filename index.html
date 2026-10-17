@@ -181,7 +181,7 @@ window.addEventListener('beforeunload',()=>{ /* save happens regularly while pag
 </script><script>
 (function(){
 const url='https://osqyecpjbolavsawweni.supabase.co',key='sb_publishable_MdrcWm98UjN3dOvM91zPfw_5n0Ptguw';
-const client=window.supabase?.createClient(url,key,{auth:{storageKey:'tsumiage-ai-auth'}});
+const client=window.supabase?.createClient(url,key);
 const $=id=>document.getElementById(id);
 const day=()=>document.getElementById('day').value;
 const show=s=>$('aiSummary').textContent=s;
