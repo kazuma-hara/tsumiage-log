@@ -8,9 +8,9 @@
 <section class="card"><h2>10項目スコア</h2><div class="muted">各項目を1〜10点で評価（未入力も可）</div><div id="metrics"></div><div id="average" class="stat">—</div><div class="muted">当日の平均点</div></section>
 <section class="card wide"><h2>最近7日間のTODO達成率</h2><div id="chart" class="chart"></div><p class="hint">※この版ではデータは端末ごとのブラウザに保存されます。スマホ・PC間の同期は未対応です。共有端末での利用は避け、定期的にバックアップしてください。</p></section></main>
 <script>
-const KEY='tsumiage_data_v4', names=['体調','気分','仕事タスク','没頭度','コミュニケーション','説明','仕事満足度','生活タスク','生活イベント','生活満足度'];
+const KEY='tsumiage_data_v4', names=['体調','気分','ワークタスク達成度','ワーク没頭度','ワーク対人','ワーク論理','生活満足度','生活タスク達成度','食事意識','運動意識','勉強意識','趣味'];
 const $=id=>document.getElementById(id);const uid=()=>crypto.randomUUID();
-let data;try{data=JSON.parse(localStorage.getItem(KEY))||{}}catch{data={}};data.tasks??=[];data.goals??=[];data.days??={};
+let data;try{data=JSON.parse(localStorage.getItem(KEY))||{}}catch{data={}};data.tasks??=[];data.goals??=[];data.days??={};if(data.scoreSchema!==2){for(const e of Object.values(data.days)){let old=e.scores||{},next={};for(const [a,b] of Object.entries({0:0,1:1,2:2,3:3,4:4,5:5,7:7,9:6}))if(old[a]!=null)next[b]=old[a];e.scores=next}data.scoreSchema=2;localStorage.setItem(KEY,JSON.stringify(data))}
 const iso=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
 $('day').value=iso(new Date());const today=()=>$('day').value;const save=()=>localStorage.setItem(KEY,JSON.stringify(data));
 const text=(tag,s)=>{let el=document.createElement(tag);el.textContent=s;return el};
@@ -36,13 +36,16 @@ redraw();
 (function(){
 const endpoint='https://osqyecpjbolavsawweni.supabase.co',key='sb_publishable_MdrcWm98UjN3dOvM91zPfw_5n0Ptguw';
 const sb=window.supabase?.createClient(endpoint,key);
-const localKey='tsumiage_data_v4',backupKey='tsumiage_before_sync_backup',scorenames=['体調','気分','仕事タスク','没頭度','コミュニケーション','説明','仕事満足度','生活タスク','生活イベント','生活満足度'];
+const localKey='tsumiage_data_v4',backupKey='tsumiage_before_sync_backup',scorenames=['体調','気分','ワークタスク達成度','ワーク没頭度','ワーク対人','ワーク論理','生活満足度','生活タスク達成度','食事意識','運動意識','勉強意識','趣味'];
 const section=document.createElement('section');section.className='card wide';section.style.gridRow='1';
 section.innerHTML='<h2>アカウント・クラウド同期</h2><div id="authui" class="flex"></div><p id="syncstatus" class="muted">接続準備中…</p>';
 document.querySelector('main').prepend(section);
 const ui=document.getElementById('authui'),status=s=>document.getElementById('syncstatus').textContent=s;
 let user=null,working=false,last=null,ready=false;
 const read=()=>{try{return JSON.parse(localStorage.getItem(localKey))||{tasks:[],goals:[],days:{}}}catch{return {tasks:[],goals:[],days:{}}}};
+const legacyMap={2:2,3:3,4:4,5:5,7:7,9:6};
+function migrateScores(d){if(d.scoreSchema===2)return d;for(const e of Object.values(d.days||{})){const old=e.scores||{},next={};for(const [from,to] of Object.entries({0:0,1:1,...legacyMap}))if(old[from]!=null)next[to]=old[from];e.scores=next}d.scoreSchema=2;return d}
+const legacyCategories={'仕事タスク':'ワークタスク達成度','没頭度':'ワーク没頭度','コミュニケーション':'ワーク対人','説明':'ワーク論理','生活タスク':'生活タスク達成度','生活満足度':'生活満足度'};
 const meaningful=d=>(d.goals?.length||0)+(d.tasks?.length||0)+Object.keys(d.days||{}).length>0;
 function normalize(d){
 d.goals??=[];d.tasks??=[];d.days??={};
@@ -72,9 +75,9 @@ const {data:rows,error}=await sb.from(t).select('*').limit(10000);if(error)throw
 }return data
 }
 function toLocal(rows){
-const d={goals:rows.goals.map(g=>({id:g.id,name:g.name,target:g.target_count})),tasks:rows.tasks.map(t=>({id:t.id,date:t.task_date,name:t.name,done:t.completed,goalId:t.goal_id||''})),days:{}};
+const d={scoreSchema:2,goals:rows.goals.map(g=>({id:g.id,name:g.name,target:g.target_count})),tasks:rows.tasks.map(t=>({id:t.id,date:t.task_date,name:t.name,done:t.completed,goalId:t.goal_id||''})),days:{}};
 for(const r of rows.diary_entries)(d.days[r.entry_date]??={}).diary=r.content;
-for(const r of rows.daily_scores){const idx=scorenames.indexOf(r.category);if(idx<0)continue;const entry=d.days[r.entry_date]??={};entry.scores??={};entry.scores[idx]=r.score}
+for(const r of rows.daily_scores){const idx=scorenames.indexOf(legacyCategories[r.category]||r.category);if(idx<0)continue;const entry=d.days[r.entry_date]??={};entry.scores??={};entry.scores[idx]=r.score}
 return d
 }
 function convert(d){
@@ -105,7 +108,7 @@ async function initialLoad(force=false){
 if(!user||working)return;working=true;ready=false;
 try{
 status('クラウドのデータを確認中…');
-const rows=await fetchAll(),cloud=toLocal(rows),local=read();
+const rows=await fetchAll(),cloud=toLocal(rows),local=migrateScores(read());
 if(meaningful(local)&&!meaningful(cloud)){
 if(confirm('端末内の既存記録をクラウドへ移行しますか？（キャンセルすると端末の内容は保持したまま同期を開始しません）')){
 localStorage.setItem(backupKey,JSON.stringify(local));
@@ -124,7 +127,7 @@ if(changed)location.reload()
 }
 async function synchronize(manual=false){
 if(!ready||working||!user)return;
-const raw=read(),serialized=JSON.stringify(raw);if(serialized===last){if(manual)status('最新の状態です');return}
+const raw=migrateScores(read()),serialized=JSON.stringify(raw);if(serialized===last){if(manual)status('最新の状態です');return}
 working=true;try{
 status('クラウドへ保存中…');
 const local=normalize(raw),rows=await fetchAll();await writeAll(local,rows);
