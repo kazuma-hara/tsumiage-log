@@ -16,7 +16,20 @@ input[type="time"] {font-size:16px;min-height:44px}
 <section class="card"><h2>長期目標</h2><div class="flex"><input id="goalName" type="text" placeholder="例：応用情報の勉強"><input id="goalDue" type="date" aria-label="長期目標の期限" title="目標期限（任意）"><button id="addGoal">追加</button></div><div class="muted">進捗は0〜100％を直接入力。いつでも編集できます（TODOとは独立）。</div><div id="goalList"></div></section>
 <section class="card"><h2>総合・7項目スコア</h2><div class="muted">各項目を1〜10点で評価（未入力も可）</div><div class="metric"><strong>総合（自動計算）</strong><output id="average" class="stat" style="font-size:20px;text-align:center;background:#e8edf5;padding:8px;border-radius:8px">—</output></div><div id="metrics"></div></section>
 <section class="card"><div class="flex" style="justify-content:space-between"><h2>日記・振り返り</h2><button id="diaryExpand" type="button" class="secondary">大きく書く・読む</button></div><div class="muted">今日の記録</div><textarea id="diary" class="diary-editor" placeholder="できたこと、気づいたこと、反省、明日へのメモなど"></textarea><div class="muted">入力内容は自動保存されます。</div></section>
-<section class="card wide"><h2>最近7日間の振り返り</h2><div class="flex" style="margin-bottom:12px"><label for="chartMode">表示する項目</label><select id="chartMode"><option value="all">総合平均</option><option value="health">体調・気分・睡眠</option><option value="work">ワーク</option><option value="life">生活・習慣</option></select><select id="chartItem" aria-label="個別項目"><option value="">グループ平均</option></select></div><div id="chart" class="chart" style="height:auto;min-height:190px;display:block;border:0"></div><p class="hint">同期状況は上部で確認できます。別端末での変更は「クラウドから再取得」を利用してください。</p></section></main><footer style="max-width:1100px;margin:20px auto 40px;padding:0 16px;text-align:right"><details><summary style="cursor:pointer;color:#64748b;font-size:13px">データ管理（バックアップ・復元）</summary><div class="flex" style="justify-content:flex-end;margin-top:12px"><button id="backup" class="secondary">バックアップを保存</button><label class="chip" style="cursor:pointer">バックアップを復元<input type="file" id="restore" accept=".json,application/json" hidden></label></div></details></footer>
+<section class="card wide"><h2>最近7日間の振り返り</h2><div class="flex" style="margin-bottom:12px"><label for="chartMode">表示する項目</label><select id="chartMode"><option value="all">総合平均</option><option value="health">体調・気分・睡眠</option><option value="work">ワーク</option><option value="life">生活・習慣</option></select><select id="chartItem" aria-label="個別項目"><option value="">グループ平均</option></select></div><div id="chart" class="chart" style="height:auto;min-height:190px;display:block;border:0"></div><p class="hint">同期状況は上部で確認できます。別端末での変更は「クラウドから再取得」を利用してください。</p></section><section class="card wide" id="periodAnalysis">
+<h2>期間の傾向分析</h2>
+<div class="flex">
+<select id="analysisPreset" aria-label="分析する期間">
+<option value="7">直近7日</option><option value="30">直近30日</option><option value="custom">期間を指定</option>
+</select>
+<input id="analysisFrom" type="date" aria-label="分析開始日">
+<span>〜</span><input id="analysisTo" type="date" aria-label="分析終了日">
+<button id="runAnalysis" type="button">AIで傾向を分析</button>
+</div>
+<p class="muted">日記と7項目スコアから、期間中の変化や繰り返す傾向を分析します（2〜90日）。記録がない日は評価に含めません。</p>
+<p id="analysisStatus" class="muted" role="status"></p>
+<div id="analysisReport" style="line-height:1.9;white-space:pre-wrap;overflow-wrap:anywhere">まだ分析結果がありません</div>
+</section></main><footer style="max-width:1100px;margin:20px auto 40px;padding:0 16px;text-align:right"><details><summary style="cursor:pointer;color:#64748b;font-size:13px">データ管理（バックアップ・復元）</summary><div class="flex" style="justify-content:flex-end;margin-top:12px"><button id="backup" class="secondary">バックアップを保存</button><label class="chip" style="cursor:pointer">バックアップを復元<input type="file" id="restore" accept=".json,application/json" hidden></label></div></details></footer>
 <script>
 const KEY='tsumiage_data_v4', names=['体調・気分','睡眠','食事','ワーク','生活タスク','運動','勉強'];
 const $=id=>document.getElementById(id);const uid=()=>crypto.randomUUID();
@@ -204,6 +217,103 @@ if(!resp.ok)throw Error(result.error||'要約の生成に失敗しました ('+r
 if(day()===date){if(day()===date){show(result.summary||'要約がありません');note('AI要約を保存しました')}const saved=JSON.parse(localStorage.getItem('tsumiage_data_v4')||'{}');saved.days??={};(saved.days[date]??={}).aiSummary=result.summary||'';localStorage.setItem('tsumiage_data_v4',JSON.stringify(saved));window.dispatchEvent(new CustomEvent('diary-summary-updated',{detail:{date,summary:result.summary||''}}))}else note(date+' のAI要約を保存しました');
 }catch(e){note('エラー: '+e.message)}finally{b.disabled=false}
 };
+
+const $period = id => document.getElementById(id);
+const periodFrom = $period('analysisFrom');
+const periodTo = $period('analysisTo');
+const periodPreset = $period('analysisPreset');
+const periodStatus = $period('analysisStatus');
+const periodReport = $period('analysisReport');
+const periodButton = $period('runAnalysis');
+let periodRequestId = 0;
+function choosePeriod(days) {
+  const end = new Date(day() + 'T12:00:00');
+  const begin = new Date(end);
+  begin.setDate(begin.getDate() - days + 1);
+  const format = d => [d.getFullYear(), String(d.getMonth()+1).padStart(2,'0'), String(d.getDate()).padStart(2,'0')].join('-');
+  periodFrom.value = format(begin);
+  periodTo.value = format(end);
+}
+function periodLength() {
+  if(!periodFrom.value || !periodTo.value) return 0;
+  const start = Date.parse(periodFrom.value + 'T00:00:00Z');
+  const end = Date.parse(periodTo.value + 'T00:00:00Z');
+  if(!Number.isFinite(start) || !Number.isFinite(end)) return 0;
+  return Math.round((end-start)/86400000)+1;
+}
+async function readPeriodReport() {
+  const current = ++periodRequestId;
+  const from = periodFrom.value, to = periodTo.value;
+  const days = periodLength();
+  if(days < 2 || days > 90) {
+    periodReport.textContent = '分析期間は2〜90日以内で選択してください';
+    periodStatus.textContent = '';
+    return;
+  }
+  periodReport.textContent = '保存済みの分析を確認中…';
+  if(!client){periodReport.textContent='AI連携を利用できません';return}
+  try {
+    const {data:{session},error:authError} = await client.auth.getSession();
+    if(current!==periodRequestId) return;
+    if(authError || !session){periodReport.textContent='ログインすると分析を利用できます';return}
+    const {data,error}=await client.from('period_analyses').select('report,updated_at')
+      .eq('user_id',session.user.id).eq('start_date',from).eq('end_date',to).maybeSingle();
+    if(current!==periodRequestId || periodFrom.value!==from || periodTo.value!==to)return;
+    periodReport.textContent=error?'分析履歴を読み込めません。期間分析用のSQLを確認してください':data?.report||'この期間の分析はまだありません';
+    periodStatus.textContent=data?.updated_at&&!error?'保存済みの分析結果':'';
+  } catch(e) {
+    if(current===periodRequestId)periodReport.textContent='読み込みに失敗しました: '+e.message;
+  }
+}
+periodPreset.onchange=()=>{
+  if(periodPreset.value!=='custom'){choosePeriod(Number(periodPreset.value));readPeriodReport()}
+};
+periodFrom.onchange=periodTo.onchange=()=>{
+  periodPreset.value='custom';
+  readPeriodReport();
+};
+periodButton.onclick=async()=>{
+  const from=periodFrom.value,to=periodTo.value,days=periodLength();
+  if(days<2 || days>90){periodStatus.textContent='分析期間は2〜90日以内で選択してください';return}
+  if(!confirm(from+'〜'+to+' の日記と7項目スコアをGoogle Geminiに送信して傾向を分析しますか？無料枠ではGoogleのサービス改善に利用される場合があります。'))return;
+  const current=++periodRequestId;
+  periodButton.disabled=true;
+  periodStatus.textContent='AIで分析しています…';
+  try {
+    if(!client)throw Error('AI連携を利用できません');
+    const {data:{session},error:authError}=await client.auth.getSession();
+    if(authError||!session)throw Error('ログインが必要です');
+    const response=await fetch(url+'/functions/v1/analyze-period',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token,'apikey':key},
+      body:JSON.stringify({start_date:from,end_date:to}),
+    });
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw Error(result.error||'傾向分析に失敗しました ('+response.status+')');
+    if(current===periodRequestId&&periodFrom.value===from&&periodTo.value===to){
+      periodReport.textContent=result.report||'結果を取得できませんでした';
+      periodStatus.textContent='分析結果を保存しました（記録のある日: '+result.recorded_days+'日 / '+result.range_days+'日）';
+    }else{
+      periodStatus.textContent='分析結果を保存しました';
+    }
+  }catch(e){
+    periodStatus.textContent='エラー: '+e.message;
+  }finally{
+    periodButton.disabled=false;
+  }
+};
+choosePeriod(7);
+client?.auth.onAuthStateChange((event,session)=>{
+  if(['INITIAL_SESSION','SIGNED_IN','TOKEN_REFRESHED'].includes(event) && session) {
+    setTimeout(readPeriodReport,0);
+  }else if(event==='SIGNED_OUT'){
+    ++periodRequestId;
+    periodReport.textContent='ログインすると分析を利用できます';
+    periodStatus.textContent='';
+  }
+});
+readPeriodReport();
+
 // Summary display is owned by the main diary state and re-rendered on every date switch.
 })();
 </script></body></html>
