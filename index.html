@@ -11,7 +11,7 @@ input[type="time"] {font-size:16px;min-height:44px}
 .diary-overlay textarea{flex:1;min-height:0;width:100%;font-size:17px;line-height:1.9;padding:18px;border-radius:12px;resize:none}
 @media(max-width:700px){.diary-editor{min-height:310px;font-size:17px;line-height:1.9}}
 </style></head><body><header><div><h1>積み上げログ</h1><div class="muted">TODO × 長期目標 × 日記</div></div><div class="flex"><button id="prevDay" class="secondary" aria-label="前日" title="前日">←</button><input id="day" type="date" aria-label="日付"><button id="nextDay" class="secondary" aria-label="翌日" title="翌日">→</button></div></header>
-<main><section class="card wide"><h2>今日の概要</h2><div class="flex"><span>総合スコア：</span><strong id="overviewScore">—</strong><span class="muted" id="overviewProgress"></span></div></section>
+<main><section class="card wide"><h2>今日の概要</h2><div class="flex"><span>総合スコア：</span><strong id="overviewScore">—</strong><span class="muted" id="overviewProgress"></span></div><div style="margin-top:14px;border-top:1px solid #edf0f4;padding-top:12px"><div class="flex" style="justify-content:space-between"><strong>AIによる今日の一言</strong><button id="aiSummarize" class="secondary" type="button">AIで要約</button></div><p id="aiSummary" style="line-height:1.8;white-space:pre-wrap">まだ要約がありません</p><div id="aiNotice" class="muted">ボタンを押したときだけ、日記と入力済みスコアをGeminiに送信します。無料枠ではGoogleのサービス改善に利用される場合があります。</div></div></section>
 <section class="card"><h2>今日のTODO</h2><div class="flex"><input id="task" type="text" placeholder="やることを入力"><button id="addTask">追加</button></div><div id="taskList"></div><div class="muted" id="taskStatus"></div></section>
 <section class="card"><h2>長期目標</h2><div class="flex"><input id="goalName" type="text" placeholder="例：応用情報の勉強"><button id="addGoal">追加</button></div><div class="muted">進捗は0〜100％を直接入力。いつでも編集できます（TODOとは独立）。</div><div id="goalList"></div></section>
 <section class="card"><h2>総合・7項目スコア</h2><div class="muted">各項目を1〜10点で評価（未入力も可）</div><div class="metric"><strong>総合（自動計算）</strong><output id="average" class="stat" style="font-size:20px;text-align:center;background:#e8edf5;padding:8px;border-radius:8px">—</output></div><div id="metrics"></div></section>
@@ -177,5 +177,45 @@ if(sb){sb.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT'){user
 else render();
 setInterval(()=>{if(ready)synchronize()},2500);
 window.addEventListener('beforeunload',()=>{ /* save happens regularly while page remains open */ });
+})();
+</script><script>
+(function(){
+const url='https://osqyecpjbolavsawweni.supabase.co',key='sb_publishable_MdrcWm98UjN3dOvM91zPfw_5n0Ptguw';
+const client=window.supabase?.createClient(url,key,{auth:{storageKey:'tsumiage-ai-auth'}});
+const $=id=>document.getElementById(id);
+const day=()=>document.getElementById('day').value;
+const show=s=>$('aiSummary').textContent=s;
+const note=s=>$('aiNotice').textContent=s;
+let requestCounter=0;
+async function readSummary(){
+const current=++requestCounter,date=day();
+show('読み込み中…');
+if(!client){show('AI連携を読み込めませんでした');return}
+const {data:{session}}=await client.auth.getSession();
+if(current!==requestCounter)return;
+if(!session){show('ログインすると要約を利用できます');return}
+const {data,error}=await client.from('diary_entries').select('ai_summary').eq('entry_date',date).maybeSingle();
+if(current!==requestCounter)return;
+show(error?'要約の読み込みに失敗しました':data?.ai_summary||'まだ要約がありません');
+}
+$('aiSummarize').onclick=async()=>{
+const b=$('aiSummarize'),date=day();
+if(!confirm(date+' の日記をGoogle Geminiに送信し、要約を生成しますか？'))return;
+b.disabled=true;note('AIで要約しています…');
+try{
+const {data:{session},error:sessionError}=await client.auth.getSession();
+if(sessionError||!session)throw Error('ログインが必要です');
+const diary=($('diary').value||'').trim();if(!diary)throw Error('日記を入力してください');
+const {data:existing,error:readError}=await client.from('diary_entries').select('content').eq('entry_date',date).maybeSingle();
+if(readError)throw Error('クラウド上の日記の確認に失敗しました');
+if(existing?.content!==$('diary').value)throw Error('日記がまだ同期されていません。上部の同期ボタンで保存してから再実行してください');
+const resp=await fetch(url+'/functions/v1/summarize-diary',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token,'apikey':key},body:JSON.stringify({date})});
+const result=await resp.json().catch(()=>({}));
+if(!resp.ok)throw Error(result.error||'要約の生成に失敗しました ('+resp.status+')');
+show(result.summary||'要約がありません');note('AI要約を保存しました');
+}catch(e){note('エラー: '+e.message)}finally{b.disabled=false}
+};
+$('day').addEventListener('change',readSummary);
+readSummary();
 })();
 </script></body></html>
