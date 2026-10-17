@@ -139,15 +139,15 @@ if(changed)location.reload()
 }catch(e){status('同期エラー: '+e.message)}finally{working=false}
 }
 async function synchronize(manual=false){
-if(!ready||working||!user)return;
-const raw=migrateScores(read()),serialized=JSON.stringify(raw);if(serialized===last){if(manual)status('最新の状態です');return}
+if(!ready||working||!user)return false;
+const raw=migrateScores(read()),serialized=JSON.stringify(raw);if(serialized===last){if(manual)status('最新の状態です');return true}
 working=true;try{
 status('クラウドへ保存中…');
 const local=normalize(raw),rows=await fetchAll();await writeAll(local,rows);
-localStorage.setItem(localKey,JSON.stringify(local));last=JSON.stringify(local);status('クラウドに保存しました');
-}catch(e){status('保存に失敗しました: '+e.message)}finally{working=false}
+localStorage.setItem(localKey,JSON.stringify(local));last=JSON.stringify(local);status('クラウドに保存しました');return true;
+}catch(e){status('保存に失敗しました: '+e.message);return false}finally{working=false}
 }
-quick.onclick=async()=>{if(!user)return;await synchronize(true);if(!working&&ready)await initialLoad(true)};
+quick.onclick=async()=>{if(!user)return;const ok=await synchronize(true);if(ok!==false&&ready)await initialLoad(true)};
 async function start(u){user=u;render();await initialLoad()}
 render();status(sb?'未ログインの場合はメールアドレスで登録・ログインしてください。':'接続ライブラリの読込に失敗しました');
 if(sb){sb.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT'){user=null;ready=false;render()}});sb.auth.getSession().then(({data,error})=>{if(error){render();status('認証状態の確認に失敗しました: '+error.message)}else if(data.session?.user)start(data.session.user);else{render();status('未ログインです。メールアドレスで新規登録またはログインしてください')}}).catch(e=>{render();status('認証確認エラー: '+e.message)})}
