@@ -132,7 +132,7 @@ localStorage.setItem(localKey,JSON.stringify(local));last=JSON.stringify(local);
 }catch(e){status('保存に失敗しました: '+e.message)}finally{working=false}
 }
 async function start(u){user=u;render();await initialLoad()}
-if(sb){sb.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT'){user=null;ready=false;render()}});sb.auth.getUser().then(({data,error})=>{if(error)status(error.message);else if(data.user)start(data.user);else{render();status('メールで登録・ログインしてください')}})}
+if(sb){sb.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT'){user=null;ready=false;render()}});sb.auth.getSession().then(({data,error})=>{if(error){render();status('認証状態の確認に失敗しました: '+error.message)}else if(data.session?.user)start(data.session.user);else{render();status('未ログインです。メールアドレスで新規登録またはログインしてください')}}).catch(e=>{render();status('認証確認エラー: '+e.message)})}
 else render();
 setInterval(()=>{if(ready)synchronize()},2500);
 window.addEventListener('beforeunload',()=>{ /* save happens regularly while page remains open */ });
