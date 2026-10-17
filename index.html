@@ -9,7 +9,7 @@
 <section class="card wide"><h2>最近7日間のTODO達成率</h2><div id="chart" class="chart"></div><p class="hint">※この版ではデータは端末ごとのブラウザに保存されます。スマホ・PC間の同期は未対応です。共有端末での利用は避け、定期的にバックアップしてください。</p></section></main>
 <script>
 const KEY='tsumiage_data_v4', names=['体調','気分','仕事タスク','没頭度','コミュニケーション','説明','仕事満足度','生活タスク','生活イベント','生活満足度'];
-const $=id=>document.getElementById(id);const uid=()=>Math.random().toString(36).slice(2)+Date.now().toString(36);
+const $=id=>document.getElementById(id);const uid=()=>crypto.randomUUID();
 let data;try{data=JSON.parse(localStorage.getItem(KEY))||{}}catch{data={}};data.tasks??=[];data.goals??=[];data.days??={};
 const iso=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
 $('day').value=iso(new Date());const today=()=>$('day').value;const save=()=>localStorage.setItem(KEY,JSON.stringify(data));
@@ -31,4 +31,109 @@ $('addGoal').onclick=()=>{let name=$('goalName').value.trim(),target=Number($('g
 $('backup').onclick=()=>{let blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='tsumiage-backup-'+today()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 $('restore').onchange=async e=>{let f=e.target.files?.[0];if(!f)return;try{let obj=JSON.parse(await f.text());if(!Array.isArray(obj.tasks)||!Array.isArray(obj.goals)||typeof obj.days!=='object'||!obj.days)throw Error('形式が違います');if(confirm('現在のデータをバックアップデータで上書きしますか？')){data=obj;save();redraw()}}catch(err){alert('復元失敗: '+err.message)}e.target.value=''};
 redraw();
+</script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+(function(){
+const endpoint='https://osqyecpjbolavsawweni.supabase.co',key='sb_publishable_MdrcWm98UjN3dOvM91zPfw_5n0Ptguw';
+const sb=window.supabase?.createClient(endpoint,key);
+const localKey='tsumiage_data_v4',backupKey='tsumiage_before_sync_backup',scorenames=['体調','気分','仕事タスク','没頭度','コミュニケーション','説明','仕事満足度','生活タスク','生活イベント','生活満足度'];
+const section=document.createElement('section');section.className='card wide';section.style.gridRow='1';
+section.innerHTML='<h2>アカウント・クラウド同期</h2><div id="authui" class="flex"></div><p id="syncstatus" class="muted">接続準備中…</p>';
+document.querySelector('main').prepend(section);
+const ui=document.getElementById('authui'),status=s=>document.getElementById('syncstatus').textContent=s;
+let user=null,working=false,last=null,ready=false;
+const read=()=>{try{return JSON.parse(localStorage.getItem(localKey))||{tasks:[],goals:[],days:{}}}catch{return {tasks:[],goals:[],days:{}}}};
+const meaningful=d=>(d.goals?.length||0)+(d.tasks?.length||0)+Object.keys(d.days||{}).length>0;
+function normalize(d){
+d.goals??=[];d.tasks??=[];d.days??={};
+const m={};for(const g of d.goals){if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(g.id)){let old=g.id;g.id=crypto.randomUUID();m[old]=g.id}}
+for(const t of d.tasks){if(m[t.goalId])t.goalId=m[t.goalId];if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(t.id))t.id=crypto.randomUUID()}
+return d
+}
+function button(label,action,secondary=false){const b=document.createElement('button');b.textContent=label;if(secondary)b.className='secondary';b.onclick=action;return b}
+function render(){
+ui.replaceChildren();if(!sb){status('通信ライブラリを読み込めませんでした。ページを更新してください。');return}
+if(!user){
+const email=document.createElement('input');email.type='email';email.placeholder='メールアドレス';email.autocomplete='email';
+const pwd=document.createElement('input');pwd.type='password';pwd.placeholder='パスワード';pwd.autocomplete='current-password';
+ui.append(email,pwd);
+ui.append(button('ログイン',async()=>{const {data,error}=await sb.auth.signInWithPassword({email:email.value,password:pwd.value});status(error?error.message:'ログインしました');if(data?.user)await start(data.user)}));
+ui.append(button('新規登録',async()=>{const {error}=await sb.auth.signUp({email:email.value,password:pwd.value,options:{emailRedirectTo:location.origin+location.pathname}});status(error?error.message:'確認メールを確認してからログインしてください')} ,true));
+}else{
+ui.append(document.createTextNode(user.email+' '));
+ui.append(button('今すぐ同期',()=>synchronize(true)));
+ui.append(button('クラウドから再取得',()=>initialLoad(true),true));
+ui.append(button('ログアウト',async()=>{ready=false;await sb.auth.signOut();user=null;render();status('ログアウトしました')} ,true));
+}
+}
+async function fetchAll(){
+const data={};for(const t of ['goals','tasks','diary_entries','daily_scores']){
+const {data:rows,error}=await sb.from(t).select('*').limit(10000);if(error)throw error;data[t]=rows||[];
+}return data
+}
+function toLocal(rows){
+const d={goals:rows.goals.map(g=>({id:g.id,name:g.name,target:g.target_count})),tasks:rows.tasks.map(t=>({id:t.id,date:t.task_date,name:t.name,done:t.completed,goalId:t.goal_id||''})),days:{}};
+for(const r of rows.diary_entries)(d.days[r.entry_date]??={}).diary=r.content;
+for(const r of rows.daily_scores){const idx=scorenames.indexOf(r.category);if(idx<0)continue;const entry=d.days[r.entry_date]??={};entry.scores??={};entry.scores[idx]=r.score}
+return d
+}
+function convert(d){
+const user_id=user.id,goals=d.goals.map(g=>({id:g.id,user_id,name:g.name,target_count:g.target})),tasks=d.tasks.map(t=>({id:t.id,user_id,name:t.name,task_date:t.date,goal_id:t.goalId||null,completed:!!t.done})),diary=[],scores=[];
+for(const [date,e] of Object.entries(d.days||{})){
+if(typeof e.diary==='string')diary.push({user_id,entry_date:date,content:e.diary});
+for(const [idx,value] of Object.entries(e.scores||{}))if(scorenames[Number(idx)]&&Number(value)>=1&&Number(value)<=10)scores.push({user_id,entry_date:date,category:scorenames[Number(idx)],score:Number(value)})
+}return {goals,tasks,diary_entries:diary,daily_scores:scores}
+}
+async function writeAll(d,cloudRows){
+const vals=convert(d);
+for(const table of ['goals','tasks','diary_entries','daily_scores']){
+let rows=vals[table];if(rows.length){const conflict={goals:'id',tasks:'id',diary_entries:'user_id,entry_date',daily_scores:'user_id,entry_date,category'}[table];const {error}=await sb.from(table).upsert(rows,{onConflict:conflict});if(error)throw error}
+}
+const identifiers={goals:r=>r.id,tasks:r=>r.id,diary_entries:r=>r.entry_date,daily_scores:r=>r.entry_date+'|'+r.category};
+for(const table of ['tasks','daily_scores','diary_entries','goals']){
+const current=new Set(vals[table].map(identifiers[table]));
+for(const old of cloudRows[table])if(!current.has(identifiers[table](old))){
+let q=sb.from(table).delete().eq('user_id',user.id);
+if(table==='goals'||table==='tasks')q=q.eq('id',old.id);
+if(table==='diary_entries')q=q.eq('entry_date',old.entry_date);
+if(table==='daily_scores')q=q.eq('entry_date',old.entry_date).eq('category',old.category);
+const {error}=await q;if(error)throw error
+}
+}
+}
+async function initialLoad(force=false){
+if(!user||working)return;working=true;ready=false;
+try{
+status('クラウドのデータを確認中…');
+const rows=await fetchAll(),cloud=toLocal(rows),local=read();
+if(meaningful(local)&&!meaningful(cloud)){
+if(confirm('端末内の既存記録をクラウドへ移行しますか？（キャンセルすると端末の内容は保持したまま同期を開始しません）')){
+localStorage.setItem(backupKey,JSON.stringify(local));
+const normalized=normalize(local);await writeAll(normalized,rows);localStorage.setItem(localKey,JSON.stringify(normalized));last=JSON.stringify(normalized);ready=true;status('クラウドへ移行完了。画面を更新します。');location.reload();return
+}else{status('既存記録を保護するため、同期は開始していません。');return}
+}
+if(meaningful(local)&&JSON.stringify(local)!==JSON.stringify(cloud)){
+if(!force&&!confirm('クラウドの記録をこの端末に読み込みます。現在の端末データは別にバックアップします。続行しますか？')){status('同期を保留しました');return}
+localStorage.setItem(backupKey,JSON.stringify(local))
+}
+localStorage.setItem(localKey,JSON.stringify(cloud));last=JSON.stringify(cloud);ready=true;
+status('クラウド同期が有効です。変更は自動保存されます。');
+location.reload()
+}catch(e){status('同期エラー: '+e.message)}finally{working=false}
+}
+async function synchronize(manual=false){
+if(!ready||working||!user)return;
+const raw=read(),serialized=JSON.stringify(raw);if(serialized===last){if(manual)status('最新の状態です');return}
+working=true;try{
+status('クラウドへ保存中…');
+const local=normalize(raw),rows=await fetchAll();await writeAll(local,rows);
+localStorage.setItem(localKey,JSON.stringify(local));last=JSON.stringify(local);status('クラウドに保存しました');
+}catch(e){status('保存に失敗しました: '+e.message)}finally{working=false}
+}
+async function start(u){user=u;render();await initialLoad()}
+if(sb){sb.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT'){user=null;ready=false;render()}});sb.auth.getUser().then(({data,error})=>{if(error)status(error.message);else if(data.user)start(data.user);else{render();status('メールで登録・ログインしてください')}})}
+else render();
+setInterval(()=>{if(ready)synchronize()},2500);
+window.addEventListener('beforeunload',()=>{ /* save happens regularly while page remains open */ });
+})();
 </script></body></html>
