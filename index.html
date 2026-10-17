@@ -216,6 +216,13 @@ show(result.summary||'要約がありません');note('AI要約を保存しま�
 }catch(e){note('エラー: '+e.message)}finally{b.disabled=false}
 };
 $('day').addEventListener('change',readSummary);
+// 認証の復元が完了した後に要約を取得する。初回の未ログイン判定だけで止めない。
+client?.auth.onAuthStateChange((event,session)=>{
+  if(event==='SIGNED_IN'||event==='INITIAL_SESSION'||event==='TOKEN_REFRESHED'){
+    if(session) setTimeout(readSummary,0);
+  }else if(event==='SIGNED_OUT'){++requestCounter;show('ログインすると要約を利用できます')}
+});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)readSummary()});
 readSummary();
 })();
 </script></body></html>
