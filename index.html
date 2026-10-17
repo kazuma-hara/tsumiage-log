@@ -116,9 +116,10 @@ if(meaningful(local)&&JSON.stringify(local)!==JSON.stringify(cloud)){
 if(!force&&!confirm('クラウドの記録をこの端末に読み込みます。現在の端末データは別にバックアップします。続行しますか？')){status('同期を保留しました');return}
 localStorage.setItem(backupKey,JSON.stringify(local))
 }
+const changed=JSON.stringify(local)!==JSON.stringify(cloud);
 localStorage.setItem(localKey,JSON.stringify(cloud));last=JSON.stringify(cloud);ready=true;
 status('クラウド同期が有効です。変更は自動保存されます。');
-location.reload()
+if(changed)location.reload()
 }catch(e){status('同期エラー: '+e.message)}finally{working=false}
 }
 async function synchronize(manual=false){
