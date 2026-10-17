@@ -50,10 +50,12 @@ configureChart();redraw();
 const endpoint='https://osqyecpjbolavsawweni.supabase.co',key='sb_publishable_MdrcWm98UjN3dOvM91zPfw_5n0Ptguw';
 const sb=window.supabase?.createClient(endpoint,key);
 const localKey='tsumiage_data_v4',backupKey='tsumiage_before_sync_backup',scorenames=['体調・気分','睡眠','食事','ワーク','生活タスク','運動','勉強'];
-const section=document.createElement('section');section.className='card wide';section.style.gridRow='1';
-section.innerHTML='<h2>アカウント・クラウド同期</h2><div id="authui" class="flex"></div><p id="syncstatus" class="muted">接続準備中…</p>';
-document.querySelector('main').prepend(section);
-const ui=document.getElementById('authui'),status=s=>document.getElementById('syncstatus').textContent=s;
+const headerSync=document.createElement('div');headerSync.className='flex';headerSync.style.justifyContent='flex-end';headerSync.style.alignItems='center';
+headerSync.innerHTML='<button id="quickSync" class="secondary" type="button" disabled>同期</button><span id="syncstatus" class="muted" role="status">接続準備中…</span>';
+document.querySelector('header').append(headerSync);
+const account=document.createElement('section');account.className='card wide';account.innerHTML='<h2>アカウント設定</h2><div id="authui" class="flex"></div>';
+const footer=document.querySelector('footer');footer.before(account);account.style.maxWidth='1100px';account.style.margin='16px auto';account.style.width='calc(100% - 32px)';
+const ui=document.getElementById('authui'),quick=document.getElementById('quickSync'),status=s=>document.getElementById('syncstatus').textContent=s;
 let user=null,working=false,last=null,ready=false;
 const read=()=>{try{return JSON.parse(localStorage.getItem(localKey))||{tasks:[],goals:[],days:{}}}catch{return {tasks:[],goals:[],days:{}}}};
 function migrateScores(d){d.days??={};if(d.scoreSchema!==4){for(const e of Object.values(d.days))e.scores={};d.scoreSchema=4;}d.goals??=[];for(const g of d.goals)g.progress??=0;d.tasks??=[];for(const t of d.tasks)t.goalId='';return d}
@@ -66,7 +68,7 @@ return d
 }
 function button(label,action,secondary=false){const b=document.createElement('button');b.textContent=label;if(secondary)b.className='secondary';b.onclick=action;return b}
 function render(){
-ui.replaceChildren();if(!sb){status('通信ライブラリを読み込めませんでした。ページを更新してください。');return}
+ui.replaceChildren();quick.disabled=!user;if(!sb){status('通信ライブラリを読み込めませんでした。ページを更新してください。');return}
 if(!user){
 const email=document.createElement('input');email.type='email';email.placeholder='メールアドレス';email.autocomplete='email';
 const pwd=document.createElement('input');pwd.type='password';pwd.placeholder='パスワード';pwd.autocomplete='current-password';
@@ -75,7 +77,7 @@ ui.append(button('ログイン',async()=>{const {data,error}=await sb.auth.signI
 ui.append(button('新規登録',async()=>{const {error}=await sb.auth.signUp({email:email.value,password:pwd.value,options:{emailRedirectTo:location.origin+location.pathname}});status(error?error.message:'確認メールを確認してからログインしてください')} ,true));
 }else{
 ui.append(document.createTextNode(user.email+' '));
-ui.append(button('今すぐ同期',()=>synchronize(true)));
+
 ui.append(button('クラウドから再取得',()=>initialLoad(true),true));
 ui.append(button('ログアウト',async()=>{ready=false;await sb.auth.signOut();user=null;render();status('ログアウトしました')} ,true));
 }
@@ -145,6 +147,7 @@ const local=normalize(raw),rows=await fetchAll();await writeAll(local,rows);
 localStorage.setItem(localKey,JSON.stringify(local));last=JSON.stringify(local);status('クラウドに保存しました');
 }catch(e){status('保存に失敗しました: '+e.message)}finally{working=false}
 }
+quick.onclick=async()=>{if(!user)return;await synchronize(true);if(!working&&ready)await initialLoad(true)};
 async function start(u){user=u;render();await initialLoad()}
 render();status(sb?'未ログインの場合はメールアドレスで登録・ログインしてください。':'接続ライブラリの読込に失敗しました');
 if(sb){sb.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT'){user=null;ready=false;render()}});sb.auth.getSession().then(({data,error})=>{if(error){render();status('認証状態の確認に失敗しました: '+error.message)}else if(data.session?.user)start(data.session.user);else{render();status('未ログインです。メールアドレスで新規登録またはログインしてください')}}).catch(e=>{render();status('認証確認エラー: '+e.message)})}
