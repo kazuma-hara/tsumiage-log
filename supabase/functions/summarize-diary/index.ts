@@ -54,14 +54,30 @@ Deno.serve(async (req) => {
   if (scoreError) return respond({ error: 'スコアを読み込めませんでした' }, 500);
   const scoreText = (scores ?? []).map(s => s.category + ': ' + s.score + '/10').join(', ');
 
+  const [{ data: tasks, error: taskError }, { data: goals, error: goalError }] = await Promise.all([
+    client.from('tasks').select('name,completed,task_date').order('created_at', { ascending: false }).limit(100),
+    client.from('goals').select('name,progress_percent,due_date').limit(50),
+  ]);
+  if (taskError || goalError) return respond({ error: 'TODO・長期目標を読み込めませんでした' }, 500);
+  const completed = (tasks ?? []).filter(t => t.completed);
+  const taskText = '全体: ' + (tasks ?? []).length + '件、完了: ' + completed.length +
+    '件、未完了: ' + ((tasks ?? []).length - completed.length) + '件。' +
+    'この日に完了したかどうかは判定できません。' +
+    'TODO例: ' + (tasks ?? []).slice(0, 20).map(t => t.name + (t.completed ? '(完了)' : '(未完了)')).join('、');
+  const goalText = (goals ?? []).map(g => g.name + ': ' + g.progress_percent + '%' +
+    (g.due_date ? '、期限' + g.due_date : '')).join('、');
   const prompt = [
-    '次の日記を日本語で2文以内・100字以内に中立的に要約してください。',
+    '次の一日の記録を日本語で2文以内・100字以内に中立的に要約してください。',
+    '日付は出力に書かないでください。日付の言い換え（「今日」「この日」）も不要です。',
+    '日記の内容を最優先し、スコア・TODO・長期目標は必要なときだけ補助的に使ってください。',
+    'TODOは全日共通なので、この日に実施したと決めつけないでください。',
     '事実にない推測、診断、励まし、アドバイス、過度な肯定は書かないでください。',
-    '個人の一日を振り返るための概要として簡潔に書いてください。',
-    '日付: ' + date,
-    '任意のスコア: ' + scoreText,
-    '日記本文:\n' + diary,
-  ].join('\n');
+    '対象日: ' + date,
+    '当日のスコア: ' + (scoreText || 'なし'),
+    '全日共通のTODO: ' + taskText,
+    '長期目標: ' + (goalText || 'なし'),
+    '日記本文:\\n' + diary,
+  ].join('\\n');
   const ai = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey },
