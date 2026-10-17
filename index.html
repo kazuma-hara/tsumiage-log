@@ -49,7 +49,7 @@ vals.forEach((v,i)=>{add('text',{x:xx(i),y:height-6,'text-anchor':'middle','font
 $('chart').replaceChildren(svg);const note=text('div','※ 未入力の日は点を表示しません。平均は入力済み項目のみで計算。');note.className='muted';$('chart').append(note);
 }
 $('chartMode').onchange=configureChart;$('chartItem').onchange=drawChart;
-function shiftDay(n){const d=new Date(today()+'T12:00:00');if(Number.isNaN(d.getTime()))return;d.setDate(d.getDate()+n);$('day').value=iso(d);redraw()}$('prevDay').onclick=()=>shiftDay(-1);$('nextDay').onclick=()=>shiftDay(1);
+function shiftDay(n){const d=new Date(today()+'T12:00:00');if(Number.isNaN(d.getTime()))return;d.setDate(d.getDate()+n);$('day').value=iso(d);redraw();$('day').dispatchEvent(new Event('change',{bubbles:true}))}$('prevDay').onclick=()=>shiftDay(-1);$('nextDay').onclick=()=>shiftDay(1);
 function diaryGrow(el){el.style.height='auto';el.style.height=Math.max(240,el.scrollHeight+3)+'px'}
 function saveDiary(value){(data.days[today()]??={}).diary=value;save()}
 const overlay=document.createElement('div');overlay.className='diary-overlay';overlay.hidden=true;
@@ -195,7 +195,7 @@ const {data:{session}}=await client.auth.getSession();
 if(current!==requestCounter)return;
 if(!session){show('ログインすると要約を利用できます');return}
 const {data,error}=await client.from('diary_entries').select('ai_summary').eq('entry_date',date).maybeSingle();
-if(current!==requestCounter)return;
+if(current!==requestCounter||day()!==date)return;
 show(error?'要約の読み込みに失敗しました':data?.ai_summary||'まだ要約がありません');
 }
 $('aiSummarize').onclick=async()=>{
@@ -212,7 +212,7 @@ if(existing?.content!==$('diary').value)throw Error('日記がまだ同期され
 const resp=await fetch(url+'/functions/v1/summarize-diary',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token,'apikey':key},body:JSON.stringify({date})});
 const result=await resp.json().catch(()=>({}));
 if(!resp.ok)throw Error(result.error||'要約の生成に失敗しました ('+resp.status+')');
-show(result.summary||'要約がありません');note('AI要約を保存しました');
+if(day()===date){show(result.summary||'要約がありません');note('AI要約を保存しました')}else note(date+' のAI要約を保存しました');
 }catch(e){note('エラー: '+e.message)}finally{b.disabled=false}
 };
 $('day').addEventListener('change',readSummary);
