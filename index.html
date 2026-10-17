@@ -21,6 +21,7 @@ input[type="time"] {font-size:16px;min-height:44px}
 const KEY='tsumiage_data_v4', names=['体調・気分','睡眠','食事','ワーク','生活タスク','運動','勉強'];
 const $=id=>document.getElementById(id);const uid=()=>crypto.randomUUID();
 let data;try{data=JSON.parse(localStorage.getItem(KEY))||{}}catch{data={}};data.tasks??=[];data.goals??=[];data.days??={};if(data.scoreSchema!==4){for(const e of Object.values(data.days))e.scores={};data.scoreSchema=4;for(const g of data.goals)g.progress??=0;for(const t of data.tasks)t.goalId='';localStorage.setItem(KEY,JSON.stringify(data))}
+window.addEventListener('diary-summary-updated',e=>{(data.days[e.detail.date]??={}).aiSummary=e.detail.summary;save();if(today()===e.detail.date)redraw()});
 const iso=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
 $('day').value=iso(new Date());const today=()=>$('day').value;const save=()=>localStorage.setItem(KEY,JSON.stringify(data));
 const text=(tag,s)=>{let el=document.createElement(tag);el.textContent=s;return el};
@@ -30,7 +31,7 @@ $('taskStatus').textContent=tasks.length?done+'/'+tasks.length+' 件完了（'+M
 
 $('taskList').replaceChildren();tasks.forEach(t=>{let row=text('div','');row.className='row';let cb=document.createElement('input');cb.type='checkbox';cb.checked=t.done;cb.onchange=()=>{t.done=cb.checked;save();redraw()};let label=text('label',t.name);if(t.done)label.style.textDecoration='line-through';let del=text('button','削除');del.className='danger';del.onclick=()=>{data.tasks=data.tasks.filter(x=>x.id!==t.id);save();redraw()};row.append(cb,label,del);$('taskList').append(row)});
 $('goalList').replaceChildren();data.goals.forEach(g=>{let pct=Math.max(0,Math.min(100,Number(g.progress)||0));let wrap=document.createElement('div');wrap.style.marginTop='16px';let line=text('div','');line.className='flex';let name=document.createElement('input');name.type='text';name.value=g.name;name.title='目標名の変更';name.onchange=()=>{let s=name.value.trim();if(s){g.name=s;save()}else name.value=g.name};let progress=document.createElement('input');progress.type='number';progress.min=0;progress.max=100;progress.step=1;progress.value=pct;progress.style.width='75px';progress.title='進捗率を0〜100で入力';progress.onchange=()=>{let n=Number(progress.value);if(!Number.isFinite(n)||n<0||n>100){alert('0〜100の数字を入力してください');progress.value=g.progress||0;return}g.progress=Math.round(n);save();redraw()};let mark=text('span','%');let del=text('button','削除');del.className='danger';del.onclick=()=>{if(confirm('この長期目標を削除しますか？')){data.goals=data.goals.filter(x=>x.id!==g.id);save();redraw()}};line.append(name,progress,mark,del);let bar=text('div','');bar.className='bar';let fill=text('div','');fill.className='fill';fill.style.width=pct+'%';bar.append(fill);wrap.append(line,bar);$('goalList').append(wrap)});
-let entry=data.days[date]||{};$('diary').value=entry.diary||'';diaryGrow($('diary'));$('metrics').replaceChildren();names.forEach((name,i)=>{let row=text('label','');row.className='metric';row.append(text('span',name));let sel=document.createElement('select');sel.add(new Option('未入力',''));for(let n=1;n<=10;n++)sel.add(new Option(n+'点',n));sel.value=entry.scores?.[i]??'';sel.style.background=sel.value?scoreColor(+sel.value):'';sel.onchange=()=>{let e=data.days[date]??={};e.scores??={};if(sel.value)e.scores[i]=Number(sel.value);else delete e.scores[i];sel.style.background=sel.value?scoreColor(+sel.value):'';save();average();drawChart()};row.append(sel);$('metrics').append(row)});
+let entry=data.days[date]||{};$('aiSummary').textContent=entry.aiSummary||'まだ要約がありません';$('diary').value=entry.diary||'';diaryGrow($('diary'));$('metrics').replaceChildren();names.forEach((name,i)=>{let row=text('label','');row.className='metric';row.append(text('span',name));let sel=document.createElement('select');sel.add(new Option('未入力',''));for(let n=1;n<=10;n++)sel.add(new Option(n+'点',n));sel.value=entry.scores?.[i]??'';sel.style.background=sel.value?scoreColor(+sel.value):'';sel.onchange=()=>{let e=data.days[date]??={};e.scores??={};if(sel.value)e.scores[i]=Number(sel.value);else delete e.scores[i];sel.style.background=sel.value?scoreColor(+sel.value):'';save();average();drawChart()};row.append(sel);$('metrics').append(row)});
 average();drawChart();
 }
 function average(){let e=data.days[today()]||{},v=Object.values(e.scores||{}).filter(n=>Number.isFinite(n));const value=v.length?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1)+' / 10':'—';$('average').textContent=value;$('overviewScore').textContent=value;$('overviewProgress').textContent=v.length+' / 7項目入力済み'}
@@ -112,7 +113,7 @@ const {data:rows,error}=await sb.from(t).select('*').limit(10000);if(error)throw
 }
 function toLocal(rows){
 const d={scoreSchema:4,goals:rows.goals.map(g=>({id:g.id,name:g.name,progress:g.progress_percent??0})),tasks:rows.tasks.map(t=>({id:t.id,date:t.task_date,name:t.name,done:t.completed,goalId:''})),days:{}};
-for(const r of rows.diary_entries){const e=d.days[r.entry_date]??={};e.diary=r.content;e.schedule=Array.isArray(r.schedule)?r.schedule:[]}
+for(const r of rows.diary_entries){const e=d.days[r.entry_date]??={};e.diary=r.content;e.schedule=Array.isArray(r.schedule)?r.schedule:[];e.aiSummary=r.ai_summary||''}
 for(const r of rows.daily_scores){const idx=scorenames.indexOf(r.category);if(idx<0)continue;const entry=d.days[r.entry_date]??={};entry.scores??={};entry.scores[idx]=r.score}
 return d
 }
@@ -186,18 +187,6 @@ const $=id=>document.getElementById(id);
 const day=()=>document.getElementById('day').value;
 const show=s=>$('aiSummary').textContent=s;
 const note=s=>$('aiNotice').textContent=s;
-let requestCounter=0;
-async function readSummary(){
-const current=++requestCounter,date=day();
-show('読み込み中…');
-if(!client){show('AI連携を読み込めませんでした');return}
-const {data:{session}}=await client.auth.getSession();
-if(current!==requestCounter)return;
-if(!session){show('ログインすると要約を利用できます');return}
-const {data,error}=await client.from('diary_entries').select('ai_summary').eq('entry_date',date).maybeSingle();
-if(current!==requestCounter||day()!==date)return;
-show(error?'要約の読み込みに失敗しました':data?.ai_summary||'まだ要約がありません');
-}
 $('aiSummarize').onclick=async()=>{
 const b=$('aiSummarize'),date=day();
 if(!confirm(date+' の日記をGoogle Geminiに送信し、要約を生成しますか？'))return;
@@ -212,17 +201,9 @@ if(existing?.content!==$('diary').value)throw Error('日記がまだ同期され
 const resp=await fetch(url+'/functions/v1/summarize-diary',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token,'apikey':key},body:JSON.stringify({date})});
 const result=await resp.json().catch(()=>({}));
 if(!resp.ok)throw Error(result.error||'要約の生成に失敗しました ('+resp.status+')');
-if(day()===date){show(result.summary||'要約がありません');note('AI要約を保存しました')}else note(date+' のAI要約を保存しました');
+if(day()===date){if(day()===date){show(result.summary||'要約がありません');note('AI要約を保存しました')}const saved=JSON.parse(localStorage.getItem('tsumiage_data_v4')||'{}');saved.days??={};(saved.days[date]??={}).aiSummary=result.summary||'';localStorage.setItem('tsumiage_data_v4',JSON.stringify(saved));window.dispatchEvent(new CustomEvent('diary-summary-updated',{detail:{date,summary:result.summary||''}}))}else note(date+' のAI要約を保存しました');
 }catch(e){note('エラー: '+e.message)}finally{b.disabled=false}
 };
-$('day').addEventListener('change',readSummary);
-// 認証の復元が完了した後に要約を取得する。初回の未ログイン判定だけで止めない。
-client?.auth.onAuthStateChange((event,session)=>{
-  if(event==='SIGNED_IN'||event==='INITIAL_SESSION'||event==='TOKEN_REFRESHED'){
-    if(session) setTimeout(readSummary,0);
-  }else if(event==='SIGNED_OUT'){++requestCounter;show('ログインすると要約を利用できます')}
-});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)readSummary()});
-readSummary();
+// Summary display is owned by the main diary state and re-rendered on every date switch.
 })();
 </script></body></html>
