@@ -106,7 +106,7 @@ return d
 function convert(d){
 const user_id=user.id,goals=d.goals.map(g=>({id:g.id,user_id,name:g.name,target_count:1,progress_percent:Math.max(0,Math.min(100,Number(g.progress)||0))})),tasks=d.tasks.map(t=>({id:t.id,user_id,name:t.name,task_date:t.date,goal_id:null,completed:!!t.done})),diary=[],scores=[];
 for(const [date,e] of Object.entries(d.days||{})){
-if(typeof e.diary==='string'||Array.isArray(e.schedule))diary.push({user_id,entry_date:date,content:e.diary,schedule:Array.isArray(e.schedule)?e.schedule:[]});
+if(typeof e.diary==='string'||Array.isArray(e.schedule))diary.push({user_id,entry_date:date,content:typeof e.diary==='string'?e.diary:'',schedule:Array.isArray(e.schedule)?e.schedule:[]});
 for(const [idx,value] of Object.entries(e.scores||{}))if(scorenames[Number(idx)]&&Number(value)>=1&&Number(value)<=10)scores.push({user_id,entry_date:date,category:scorenames[Number(idx)],score:Number(value)})
 }return {goals,tasks,diary_entries:diary,daily_scores:scores}
 }
