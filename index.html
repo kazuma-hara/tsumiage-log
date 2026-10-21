@@ -19,6 +19,13 @@ input[type="time"] {font-size:16px;min-height:44px}
 </style></head><body><header><div><h1>積み上げログ</h1><div class="muted">TODO × 長期目標 × 日記</div></div><div class="flex"><button id="prevDay" class="secondary" aria-label="前日" title="前日">←</button><input id="day" type="date" aria-label="日付"><button id="nextDay" class="secondary" aria-label="翌日" title="翌日">→</button></div></header>
 <main><section class="card wide"><h2>今日の概要</h2><div class="flex"><span>総合スコア：</span><strong id="overviewScore">—</strong><span class="muted" id="overviewProgress"></span></div><div style="margin-top:14px;border-top:1px solid #edf0f4;padding-top:12px"><div class="flex" style="justify-content:space-between"><strong>デイリーレポート</strong><button id="aiSummarize" class="secondary" type="button">AIで要約</button></div><p id="aiSummary" style="line-height:1.8;white-space:pre-wrap">まだ要約がありません</p><div id="aiNotice" class="muted"></div></div></section>
 <section class="card"><h2>TODO（全日共通）</h2><div class="flex"><input id="task" type="text" placeholder="やることを入力"><button id="addTask">追加</button></div><div id="taskList"></div><div class="muted" id="taskStatus"></div><details id="completedTasks" style="margin-top:12px" hidden><summary style="cursor:pointer;font-size:14px;color:#64748b">完了済み（<span id="completedCount">0</span>件）</summary><div id="completedTaskList"></div></details></section>
+<section class="card" id="routineCard">
+<h2>ルーティン</h2>
+<div class="flex"><input id="routineName" type="text" placeholder="毎日続けたいこと"><button id="addRoutine" type="button">追加</button></div>
+<div id="routineList"></div>
+<button id="seedRoutines" class="secondary" type="button" style="margin-top:12px" hidden>相談した9項目をまとめて追加</button>
+<div class="muted" style="margin-top:10px">日付ごとにチェックを記録します。継続は選択日の前日までの達成も含みます。</div>
+</section>
 <section class="card"><h2>長期目標</h2><div class="flex"><input id="goalName" type="text" placeholder="例：応用情報の勉強"><input id="goalDue" type="date" aria-label="長期目標の期限" title="目標期限（任意）"><button id="addGoal">追加</button></div><div class="muted">進捗は0〜100％を直接入力。いつでも編集できます（TODOとは独立）。</div><div id="goalList"></div></section>
 <section class="card"><h2>総合・7項目スコア</h2><div class="muted">各項目を1〜10点で評価（未入力も可）</div><div class="metric"><strong>総合（自動計算）</strong><output id="average" class="stat" style="font-size:20px;text-align:center;background:#e8edf5;padding:8px;border-radius:8px">—</output></div><div id="metrics"></div></section>
 <section class="card"><div class="flex" style="justify-content:space-between"><h2>日記・振り返り</h2><button id="diaryExpand" type="button" class="secondary">大きく書く・読む</button></div><div class="muted">今日の記録</div><textarea id="diary" class="diary-editor" placeholder="できたこと、気づいたこと、反省、明日へのメモなど"></textarea><div class="muted">入力内容は自動保存されます。</div></section>
@@ -39,13 +46,78 @@ input[type="time"] {font-size:16px;min-height:44px}
 <script>
 const KEY='tsumiage_data_v4', names=['体調・気分','睡眠','食事','ワーク','生活タスク','運動','勉強'];
 const $=id=>document.getElementById(id);const uid=()=>crypto.randomUUID();
-let data;try{data=JSON.parse(localStorage.getItem(KEY))||{}}catch{data={}};data.tasks??=[];data.goals??=[];data.days??={};if(data.scoreSchema!==4){for(const e of Object.values(data.days))e.scores={};data.scoreSchema=4;for(const g of data.goals)g.progress??=0;for(const t of data.tasks)t.goalId='';localStorage.setItem(KEY,JSON.stringify(data))}
+let data;try{data=JSON.parse(localStorage.getItem(KEY))||{}}catch{data={}};data.tasks??=[];data.goals??=[];data.routines??=[];data.routineChecks??=[];data.days??={};if(data.scoreSchema!==4){for(const e of Object.values(data.days))e.scores={};data.scoreSchema=4;for(const g of data.goals)g.progress??=0;for(const t of data.tasks)t.goalId='';localStorage.setItem(KEY,JSON.stringify(data))}
 data.tasks.forEach((t,i)=>{if(!Number.isInteger(t.sortOrder))t.sortOrder=i});
 window.addEventListener('diary-summary-updated',e=>{(data.days[e.detail.date]??={}).aiSummary=e.detail.summary;save();if(today()===e.detail.date)redraw()});
 const iso=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
 $('day').value=iso(new Date());const today=()=>$('day').value;const save=()=>localStorage.setItem(KEY,JSON.stringify(data));
 const text=(tag,s)=>{let el=document.createElement(tag);el.textContent=s;return el};
+
+const initialRoutineNames=['丁寧に歯を磨く','食器を洗う','掃除機をかける','10,000歩歩く','腹筋5回','スクワット5回','翌日の準備','1問学習','1ページ読書'];
+function previousISO(date){return new Date(Date.parse(date+'T00:00:00Z')-86400000).toISOString().slice(0,10)}
+function routineStats(routineId,anchor){
+  const dates=[...new Set(data.routineChecks.filter(x=>x.routineId===routineId&&x.date<=anchor).map(x=>x.date))].sort();
+  let restarts=0;
+  for(let i=1;i<dates.length;i++){
+    if(Date.parse(dates[i]+'T00:00:00Z')-Date.parse(dates[i-1]+'T00:00:00Z')>86400000)restarts++;
+  }
+  const included=new Set(dates);
+  let cursor=included.has(anchor)?anchor:previousISO(anchor),streak=0;
+  while(included.has(cursor)){streak++;cursor=previousISO(cursor)}
+  return {streak,total:dates.length,restarts};
+}
+function addRoutineNamed(name){
+  name=name.trim();if(!name)return;
+  if(name.length>100){alert('項目は100文字以内で入力してください');return}
+  data.routines.push({id:uid(),name,sortOrder:data.routines.length,createdAt:new Date().toISOString(),deletedAt:null});
+  save();redraw();
+}
+function drawRoutines(){
+  const date=today(),items=data.routines.filter(r=>!r.deletedAt)
+     .sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
+  $('seedRoutines').hidden=data.routines.length!==0;
+  $('routineList').replaceChildren();
+  if(!items.length)$('routineList').append(text('p','登録済みのルーティンはありません'));
+  items.forEach(r=>{
+    const checked=data.routineChecks.some(x=>x.routineId===r.id&&x.date===date);
+    const row=text('div','');row.className='row';row.style.flexWrap='wrap';row.style.justifyContent='flex-start';
+    const box=document.createElement('input');box.type='checkbox';box.checked=checked;box.setAttribute('aria-label',r.name+'を実施');
+    box.onchange=()=>{
+      if(box.checked&&!data.routineChecks.some(x=>x.routineId===r.id&&x.date===date)){
+        data.routineChecks.push({routineId:r.id,date,checkedAt:new Date().toISOString()});
+      }else if(!box.checked){
+        data.routineChecks=data.routineChecks.filter(x=>!(x.routineId===r.id&&x.date===date));
+      }
+      save();redraw();
+    };
+    const label=text('span',r.name);label.style.flex='1';label.style.minWidth='120px';label.style.overflowWrap='anywhere';
+    const stats=routineStats(r.id,date);
+    const summary=text('span','継続'+stats.streak+'回 · 総'+stats.total+'回 · 復帰'+stats.restarts+'回');
+    summary.className='muted';summary.style.flexBasis='100%';summary.style.paddingLeft='28px';
+    const edit=text('button','編集');edit.type='button';edit.className='secondary';
+    const del=text('button','削除');del.type='button';del.className='danger';
+    edit.onclick=()=>{
+      const field=document.createElement('input');field.type='text';field.value=r.name;field.style.flex='1';field.style.minWidth='120px';
+      label.replaceWith(field);edit.textContent='保存';
+      const cancel=text('button','取消');cancel.type='button';cancel.className='secondary';
+      cancel.onclick=redraw;row.insertBefore(cancel,del);
+      const commit=()=>{const name=field.value.trim();if(!name||name.length>100){alert('1〜100文字で入力してください');return}r.name=name;save();redraw()};
+      edit.onclick=commit;field.onkeydown=e=>{if(e.key==='Enter')commit();if(e.key==='Escape')redraw()};
+      field.focus();field.select();
+    };
+    del.onclick=()=>{if(!confirm('ルーティンを一覧から削除しますか？実施履歴は保持されます。'))return;r.deletedAt=new Date().toISOString();save();redraw()};
+    row.append(box,label,edit,del,summary);$('routineList').append(row);
+  });
+}
+$('addRoutine').onclick=()=>{addRoutineNamed($('routineName').value);$('routineName').value=''};
+$('routineName').addEventListener('keydown',e=>{if(e.key==='Enter')$('addRoutine').click()});
+$('seedRoutines').onclick=()=>{
+  if(!confirm('相談した9項目のルーティンを登録しますか？'))return;
+  for(const name of initialRoutineNames)addRoutineNamed(name);
+};
+
 function redraw(){
+drawRoutines();
 const date=today();
 function tasksByStatus(done){
   return data.tasks.filter(t=>!!t.done===done&&!t.deletedAt)
@@ -173,10 +245,10 @@ const footer=document.querySelector('footer');footer.before(account);account.sty
 const ui=document.getElementById('authui'),quick=document.getElementById('quickSync'),status=s=>document.getElementById('syncstatus').textContent=s;
 let user=null,working=false,last=null,ready=false;
 const read=()=>{try{return JSON.parse(localStorage.getItem(localKey))||{tasks:[],goals:[],days:{}}}catch{return {tasks:[],goals:[],days:{}}}};
-function migrateScores(d){d.days??={};if(d.scoreSchema!==4){for(const e of Object.values(d.days))e.scores={};d.scoreSchema=4;}d.goals??=[];for(const g of d.goals)g.progress??=0;d.tasks??=[];for(const t of d.tasks)t.goalId='';return d}
-const meaningful=d=>(d.goals?.length||0)+(d.tasks?.length||0)+Object.keys(d.days||{}).length>0;
+function migrateScores(d){d.days??={};if(d.scoreSchema!==4){for(const e of Object.values(d.days))e.scores={};d.scoreSchema=4;}d.goals??=[];for(const g of d.goals)g.progress??=0;d.tasks??=[];for(const t of d.tasks)t.goalId='';d.routines??=[];d.routineChecks??=[];return d}
+const meaningful=d=>(d.goals?.length||0)+(d.tasks?.length||0)+(d.routines?.length||0)+(d.routineChecks?.length||0)+Object.keys(d.days||{}).length>0;
 function normalize(d){
-d.goals??=[];d.tasks??=[];d.days??={};
+d.goals??=[];d.tasks??=[];d.routines??=[];d.routineChecks??=[];d.days??={};
 const m={};for(const g of d.goals){if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(g.id)){let old=g.id;g.id=crypto.randomUUID();m[old]=g.id}}
 for(const t of d.tasks){if(m[t.goalId])t.goalId=m[t.goalId];if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(t.id))t.id=crypto.randomUUID()}
 return d
@@ -198,35 +270,36 @@ ui.append(button('ログアウト',async()=>{ready=false;await sb.auth.signOut()
 }
 }
 async function fetchAll(){
-const data={};for(const t of ['goals','tasks','diary_entries','daily_scores']){
+const data={};for(const t of ['goals','tasks','routines','routine_checks','diary_entries','daily_scores']){
 const {data:rows,error}=await sb.from(t).select('*').limit(10000);if(error)throw error;data[t]=rows||[];
 }return data
 }
 function toLocal(rows){
-const d={scoreSchema:4,goals:rows.goals.map(g=>({id:g.id,name:g.name,progress:g.progress_percent??0,dueDate:g.due_date||null})),tasks:rows.tasks.map((t,i)=>({id:t.id,date:t.task_date,name:t.name,done:t.completed,goalId:'',createdAt:t.created_at||null,completedAt:t.completed_at||null,deletedAt:t.deleted_at||null,sortOrder:Number.isInteger(t.sort_order)?t.sort_order:i})),days:{}};
+const d={scoreSchema:4,goals:rows.goals.map(g=>({id:g.id,name:g.name,progress:g.progress_percent??0,dueDate:g.due_date||null})),tasks:rows.tasks.map((t,i)=>({id:t.id,date:t.task_date,name:t.name,done:t.completed,goalId:'',createdAt:t.created_at||null,completedAt:t.completed_at||null,deletedAt:t.deleted_at||null,sortOrder:Number.isInteger(t.sort_order)?t.sort_order:i})),routines:rows.routines.map(r=>({id:r.id,name:r.name,createdAt:r.created_at,deletedAt:r.deleted_at,sortOrder:r.sort_order})),routineChecks:rows.routine_checks.map(c=>({routineId:c.routine_id,date:c.entry_date,checkedAt:c.checked_at})),days:{}};
 for(const r of rows.diary_entries){const e=d.days[r.entry_date]??={};e.diary=r.content;e.schedule=Array.isArray(r.schedule)?r.schedule:[];e.aiSummary=r.ai_summary||''}
 for(const r of rows.daily_scores){const idx=scorenames.indexOf(r.category);if(idx<0)continue;const entry=d.days[r.entry_date]??={};entry.scores??={};entry.scores[idx]=r.score}
 return d
 }
 function convert(d){
-const user_id=user.id,goals=d.goals.map(g=>({id:g.id,user_id,name:g.name,target_count:1,progress_percent:Math.max(0,Math.min(100,Number(g.progress)||0)),due_date:g.dueDate||null})),tasks=d.tasks.map(t=>({id:t.id,user_id,name:t.name,task_date:t.date||new Date().toISOString().slice(0,10),goal_id:null,completed:!!t.done,completed_at:t.completedAt||null,deleted_at:t.deletedAt||null,sort_order:Number.isInteger(t.sortOrder)?t.sortOrder:0,...(t.createdAt?{created_at:t.createdAt}:{})})),diary=[],scores=[];
+const user_id=user.id,goals=d.goals.map(g=>({id:g.id,user_id,name:g.name,target_count:1,progress_percent:Math.max(0,Math.min(100,Number(g.progress)||0)),due_date:g.dueDate||null})),tasks=d.tasks.map(t=>({id:t.id,user_id,name:t.name,task_date:t.date||new Date().toISOString().slice(0,10),goal_id:null,completed:!!t.done,completed_at:t.completedAt||null,deleted_at:t.deletedAt||null,sort_order:Number.isInteger(t.sortOrder)?t.sortOrder:0,...(t.createdAt?{created_at:t.createdAt}:{})})),routines=(d.routines||[]).map(r=>({id:r.id,user_id,name:r.name,sort_order:r.sortOrder||0,deleted_at:r.deletedAt||null,...(r.createdAt?{created_at:r.createdAt}:{})})),routine_checks=(d.routineChecks||[]).map(x=>({user_id,routine_id:x.routineId,entry_date:x.date,checked_at:x.checkedAt||new Date().toISOString()})),diary=[],scores=[];
 for(const [date,e] of Object.entries(d.days||{})){
 if(typeof e.diary==='string'||Array.isArray(e.schedule))diary.push({user_id,entry_date:date,content:typeof e.diary==='string'?e.diary:'',schedule:Array.isArray(e.schedule)?e.schedule:[]});
 for(const [idx,value] of Object.entries(e.scores||{}))if(scorenames[Number(idx)]&&Number(value)>=1&&Number(value)<=10)scores.push({user_id,entry_date:date,category:scorenames[Number(idx)],score:Number(value)})
-}return {goals,tasks,diary_entries:diary,daily_scores:scores}
+}return {goals,tasks,routines,routine_checks,diary_entries:diary,daily_scores:scores}
 }
 async function writeAll(d,cloudRows){
 const vals=convert(d);
-for(const table of ['goals','tasks','diary_entries','daily_scores']){
-let rows=vals[table];if(rows.length){const conflict={goals:'id',tasks:'id',diary_entries:'user_id,entry_date',daily_scores:'user_id,entry_date,category'}[table];const {error}=await sb.from(table).upsert(rows,{onConflict:conflict});if(error)throw error}
+for(const table of ['goals','tasks','routines','routine_checks','diary_entries','daily_scores']){
+let rows=vals[table];if(rows.length){const conflict={goals:'id',tasks:'id',routines:'id',routine_checks:'user_id,routine_id,entry_date',diary_entries:'user_id,entry_date',daily_scores:'user_id,entry_date,category'}[table];const {error}=await sb.from(table).upsert(rows,{onConflict:conflict});if(error)throw error}
 }
-const identifiers={goals:r=>r.id,tasks:r=>r.id,diary_entries:r=>r.entry_date,daily_scores:r=>r.entry_date+'|'+r.category};
+const identifiers={goals:r=>r.id,tasks:r=>r.id,routine_checks:r=>r.routine_id+'|'+r.entry_date,diary_entries:r=>r.entry_date,daily_scores:r=>r.entry_date+'|'+r.category};
 // Tasks use soft deletion (deleted_at); never physically remove historical TODOs during sync.
-for(const table of ['daily_scores','diary_entries','goals']){
+for(const table of ['routine_checks','daily_scores','diary_entries','goals']){
 const current=new Set(vals[table].map(identifiers[table]));
 for(const old of cloudRows[table])if(!current.has(identifiers[table](old))){
 let q=sb.from(table).delete().eq('user_id',user.id);
 if(table==='goals'||table==='tasks')q=q.eq('id',old.id);
+if(table==='routine_checks')q=q.eq('routine_id',old.routine_id).eq('entry_date',old.entry_date);
 if(table==='diary_entries')q=q.eq('entry_date',old.entry_date);
 if(table==='daily_scores')q=q.eq('entry_date',old.entry_date).eq('category',old.category);
 const {error}=await q;if(error)throw error
